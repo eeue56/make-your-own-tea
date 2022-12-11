@@ -193,6 +193,20 @@ function isProperty(tag: string, key: string): boolean {
 
 // set an attribute based on whether it's a property or not
 function setAttribute(currentTree: HTMLElement, attribute: Attribute) {
+    // handle classes so that adding / removing a class doesn't actually modify the dom or painting.
+    // In theory: not needed. In practice, this seems help.
+    if (attribute.key === "class") {
+        const classes = (attribute as StringAttribute).value.split(" ");
+        currentTree.classList.add(...classes);
+
+        for (const class_ of currentTree.classList) {
+            if (!classes.includes(class_)) {
+                currentTree.classList.remove(class_);
+            }
+        }
+        return;
+    }
+
     if (isProperty(currentTree.tagName, attribute.key)) {
         (currentTree as any)[attribute.key] = attribute.value;
     } else {
@@ -306,7 +320,6 @@ function patchEvents<message>(
 // 1 and 2 are pretty simple, but 3 and 4 are important
 // If you change values to be exactly what they are already
 // it can trigger a redraw
-// We will handle 3 later
 function patchAttributes<message>(
     previousView: Html<message>,
     nextView: Html<message>,
@@ -317,16 +330,48 @@ function patchAttributes<message>(
             return;
         }
         case "Node": {
-            // remove attributes from the previously rendered node
             if (previousView.kind !== "Text") {
-                for (const attribute of previousView.attributes) {
-                    currentTree.removeAttribute(attribute.key);
-                }
-            }
+                const previousAttributeKeys = previousView.attributes.map(
+                    (attribute) => attribute.key
+                );
+                const nextAttributeKeys = nextView.attributes.map(
+                    (attribute) => attribute.key
+                );
 
-            // set attributes
-            for (const attribute of nextView.attributes) {
-                setAttribute(currentTree, attribute);
+                for (const nextAttribute of nextView.attributes) {
+                    // if the element previously had this attribute
+                    if (previousAttributeKeys.includes(nextAttribute.key)) {
+                        for (const previousAttribute of previousView.attributes) {
+                            if (nextAttribute.key === previousAttribute.key) {
+                                // if the attribute value has changed
+                                if (
+                                    nextAttribute.value !==
+                                    previousAttribute.value
+                                ) {
+                                    setAttribute(currentTree, nextAttribute);
+                                }
+                                break;
+                            }
+                        }
+                    } else {
+                        setAttribute(currentTree, nextAttribute);
+                    }
+                }
+
+                for (const previousAttribute of previousView.attributes) {
+                    const hasAttributeBeenSeen = nextAttributeKeys.includes(
+                        previousAttribute.key
+                    );
+
+                    if (!hasAttributeBeenSeen) {
+                        currentTree.removeAttribute(previousAttribute.key);
+                    }
+                }
+            } else {
+                // set attributes
+                for (const attribute of nextView.attributes) {
+                    setAttribute(currentTree, attribute);
+                }
             }
         }
     }
@@ -658,7 +703,12 @@ function viewName(name: string, isChecked: boolean): Html<Message> {
             ),
         ],
         [ ],
-        [ attribute("class", "name-list-item") ]
+        [
+            attribute(
+                "class",
+                isChecked ? "name-list-item checked" : "name-list-item"
+            ),
+        ]
     );
 }
 
