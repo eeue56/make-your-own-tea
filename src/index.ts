@@ -155,12 +155,23 @@ type Program<model, message> = {
     view(model: model): Html<message>;
 };
 
+// We'd like a way for external functions to be notified by a subscription to
+// messages and data change within the program.
+// Each subscription gets the incoming message that triggered the subscription,
+// and the model after the update message has been run.
+type SubscriptionFunction<model, message> = (
+    message: message,
+    model: model
+) => void;
+
 // Once we've started a program, we'll want a type to represent it.
 // We'll provide a way to check the current program's model state
 // And provide a way to send a message to a running program from outside the program.
+// We'll also provide a way to subscribe to a program.
 type RunningProgram<model, message> = {
     model: model;
     send(message: message): void;
+    subscribe(subscriptionFunction: SubscriptionFunction<model, message>): void;
 };
 
 type Tree = HTMLElement | Text;
@@ -582,9 +593,14 @@ function runProgram<model, message>(
 
     const root = document.getElementById("root");
     if (root) {
+        let subscription: null | SubscriptionFunction<model, message> = null;
+
         const listener = (msg: message) => {
             if (currentTree === null) return;
             currentModel = program.update(msg, currentModel, listener);
+            if (subscription) {
+                subscription(msg, currentModel);
+            }
 
             const nextView = program.view(currentModel);
             const status = patch(listener, previousView, nextView, currentTree);
@@ -596,12 +612,19 @@ function runProgram<model, message>(
         currentTree = buildTree(listener, previousView);
         // we now replace the children of the root element with the elements
         root.replaceChildren(currentTree);
-        return { send: listener, model: currentModel };
+
+        function subscribe(
+            subscriptionFunction: SubscriptionFunction<model, message>
+        ) {
+            subscription = subscriptionFunction;
+        }
+
+        return { send: listener, model: currentModel, subscribe: subscribe };
     } else {
         console.error(
             "You forgot to define a <div id='root'></div> inside body"
         );
-        return { send: () => {}, model: currentModel };
+        return { send: () => {}, model: currentModel, subscribe: () => {} };
     }
 }
 
@@ -616,9 +639,14 @@ function runProgramWithHydration<model, message>(
 
     const root = document.getElementById("root");
     if (root) {
+        let subscription: null | SubscriptionFunction<model, message> = null;
+
         const listener = (msg: message) => {
             if (currentTree === null) return;
             currentModel = program.update(msg, currentModel, listener);
+            if (subscription) {
+                subscription(msg, currentModel);
+            }
 
             const nextView = program.view(currentModel);
             const status = patch(listener, previousView, nextView, currentTree);
@@ -634,12 +662,19 @@ function runProgramWithHydration<model, message>(
 
         // we now reattach event listeners to the dom
         hydrate(listener, previousView, currentTree);
-        return { send: listener, model: currentModel };
+
+        function subscribe(
+            subscriptionFunction: SubscriptionFunction<model, message>
+        ) {
+            subscription = subscriptionFunction;
+        }
+
+        return { send: listener, model: currentModel, subscribe: subscribe };
     } else {
         console.error(
             "You forgot to define a <div id='root'></div> inside body"
         );
-        return { send: () => {}, model: currentModel };
+        return { send: () => {}, model: currentModel, subscribe: () => {} };
     }
 }
 
@@ -885,6 +920,11 @@ function main() {
         update,
     });
 
+    program.subscribe((message: Message, model: Model): void => {
+        console.log("A message was recieved", message.kind);
+        console.log("The new model is now", JSON.stringify(model));
+    });
+
     setTimeout(() => {
         program.send(AddName("A name from timeout"));
     }, 5000);
@@ -898,6 +938,11 @@ function mainWithHydration() {
         initialModel,
         view,
         update,
+    });
+
+    program.subscribe((message: Message, model: Model): void => {
+        console.log("A message was recieved", message.kind);
+        console.log("The new model is now", JSON.stringify(model));
     });
 }
 
