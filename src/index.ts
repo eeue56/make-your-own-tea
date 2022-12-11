@@ -17,18 +17,36 @@ function on<message>(
     };
 }
 
-// Attributes take many forms - some don't need any value, some need boolean values.
-// For now we'll just focus on string attributes e.g class or value.
-type Attribute = {
+type StringAttribute = {
+    kind: "StringAttribute";
     key: string;
     value: string;
 };
 
-function attribute(key: string, value: string): Attribute {
-    return {
-        key,
-        value,
-    };
+type BooleanAttribute = {
+    kind: "BooleanAttribute";
+    key: string;
+    value: boolean;
+};
+
+// Attributes take many forms - some don't need any value, some need boolean values.
+// For now we'll just focus on string attributes e.g class or value.
+type Attribute = StringAttribute | BooleanAttribute;
+
+function attribute(key: string, value: string | boolean): Attribute {
+    if (typeof value === "string") {
+        return {
+            kind: "StringAttribute",
+            key,
+            value,
+        };
+    } else {
+        return {
+            kind: "BooleanAttribute",
+            key,
+            value,
+        };
+    }
 }
 
 // Valid tags.
@@ -168,7 +186,23 @@ function setAttribute(currentTree: HTMLElement, attribute: Attribute) {
     if (isProperty(currentTree.tagName, attribute.key)) {
         (currentTree as any)[attribute.key] = attribute.value;
     } else {
-        currentTree.setAttribute(attribute.key, attribute.value);
+        switch (attribute.kind) {
+            case "BooleanAttribute": {
+                // boolean attributes can be set to be their own key, if it's there.
+                if (attribute.value) {
+                    currentTree.setAttribute(attribute.key, attribute.key);
+                } else if (
+                    currentTree.getAttribute(attribute.key) === attribute.key
+                ) {
+                    currentTree.removeAttribute(attribute.key);
+                }
+                return;
+            }
+            case "StringAttribute": {
+                currentTree.setAttribute(attribute.key, attribute.value);
+                return;
+            }
+        }
     }
 }
 
@@ -423,6 +457,7 @@ function runProgram<model, message>(
 type Model = {
     currentName: string;
     names: string[];
+    checkedNames: string[];
 };
 
 type Noop = {
@@ -459,14 +494,24 @@ function Remove(name: string): Remove {
     return { kind: "Remove", name };
 }
 
+type Check = {
+    kind: "Check";
+    name: string;
+};
+
+function Check(name: string): Check {
+    return { kind: "Check", name };
+}
+
 // Our union type of messages.
 // We have Noop - aka, do nothing, and Click - aka, a user has clicked the button.
-type Message = Noop | Click | SetCurrentName | Remove;
+type Message = Noop | Click | SetCurrentName | Remove | Check;
 
 // Initial model
 const initialModel: Model = {
     currentName: "",
     names: [ ],
+    checkedNames: [ ],
 };
 
 // Our update function.
@@ -479,6 +524,7 @@ function update(message: Message, model: Model): Model {
             return {
                 ...model,
                 names: [ ...model.names, model.currentName ],
+                checkedNames: [ ...model.names, model.currentName ],
                 currentName: "",
             };
         }
@@ -490,6 +536,21 @@ function update(message: Message, model: Model): Model {
                 ...model,
                 names: model.names.filter((name) => name !== message.name),
             };
+        }
+        case "Check": {
+            if (model.checkedNames.indexOf(message.name) === -1) {
+                return {
+                    ...model,
+                    checkedNames: [ ...model.checkedNames, message.name ],
+                };
+            } else {
+                return {
+                    ...model,
+                    checkedNames: model.checkedNames.filter(
+                        (name) => name !== message.name
+                    ),
+                };
+            }
         }
     }
 }
@@ -515,9 +576,17 @@ function viewNameEntry(model: Model): Html<Message> {
     );
 }
 
-function viewName(name: string): Html<Message> {
+function viewName(name: string, isChecked: boolean): Html<Message> {
     return div(
         [
+            input(
+                [ ],
+                [ on("click", () => Check(name)) ],
+                [
+                    attribute("type", "checkbox"),
+                    attribute("checked", isChecked),
+                ]
+            ),
             text(name),
             button(
                 [ text("Remove this name") ],
@@ -531,7 +600,20 @@ function viewName(name: string): Html<Message> {
 }
 
 function viewNames(model: Model): Html<Message> {
-    return div(model.names.map(viewName), [ ], [ ]);
+    return div(
+        [
+            ...model.names.map((name) =>
+                viewName(name, model.checkedNames.includes(name))
+            ),
+            div(
+                [ text("Checked names: " + model.checkedNames.join(", ")) ],
+                [ ],
+                [ ]
+            ),
+        ],
+        [ ],
+        [ ]
+    );
 }
 
 function view(model: Model): Html<Message> {
