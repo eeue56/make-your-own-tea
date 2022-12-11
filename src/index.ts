@@ -18,7 +18,7 @@ function on<message>(
 }
 
 // Valid tags.
-type Tag = "div" | "h1" | "button";
+type Tag = "div" | "h1" | "button" | "input";
 
 // To provide a way to do patching and generation of html,
 // we build up an abstract syntax tree (AST).
@@ -80,6 +80,13 @@ function button<message>(
     events: Event<message>[]
 ): Html<message> {
     return node("button", children, events);
+}
+
+function input<message>(
+    children: Html<message>[],
+    events: Event<message>[]
+): Html<message> {
+    return node("input", children, events);
 }
 
 function text(content: string): Html<any> {
@@ -264,7 +271,7 @@ function patch<message>(
                 // remove any excess children that were added to the dom during the previous render
                 for (
                     let i = currentTree.childNodes.length - 1;
-                    i > nextView.children.length;
+                    i > nextView.children.length - 1;
                     i--
                 ) {
                     const node = currentTree.childNodes[i];
@@ -319,53 +326,114 @@ function runProgram<model, message>(
 
 // Our model.
 type Model = {
-    name: string;
-    clicks: number;
+    currentName: string;
+    names: string[];
 };
+
+type Noop = {
+    kind: "Noop";
+};
+
+function Noop(): Noop {
+    return { kind: "Noop" };
+}
+
+type Click = {
+    kind: "Click";
+};
+
+function Click(): Click {
+    return { kind: "Click" };
+}
+
+type SetCurrentName = {
+    kind: "SetCurrentName";
+    value: string;
+};
+
+function SetCurrentName(value: string): SetCurrentName {
+    return { kind: "SetCurrentName", value };
+}
+
+type Remove = {
+    kind: "Remove";
+    name: string;
+};
+
+function Remove(name: string): Remove {
+    return { kind: "Remove", name };
+}
 
 // Our union type of messages.
 // We have Noop - aka, do nothing, and Click - aka, a user has clicked the button.
-type Message = "Noop" | "Click";
+type Message = Noop | Click | SetCurrentName | Remove;
 
 // Initial model
 const initialModel: Model = {
-    name: "Noah",
-    clicks: 0,
+    currentName: "",
+    names: [ ],
 };
 
 // Our update function.
 function update(message: Message, model: Model): Model {
-    switch (message) {
+    switch (message.kind) {
         case "Noop": {
             return model;
         }
         case "Click": {
-            return { ...model, clicks: model.clicks + 1 };
+            return {
+                ...model,
+                names: [ ...model.names, model.currentName ],
+                currentName: "",
+            };
+        }
+        case "SetCurrentName": {
+            return { ...model, currentName: message.value };
+        }
+        case "Remove": {
+            return {
+                ...model,
+                names: model.names.filter((name) => name !== message.name),
+            };
         }
     }
 }
 
 // Our view function.
 function view(model: Model): Html<Message> {
-    // Conditionally render a click button based on number of clicks.
-    // If there are more than 4 clicks, disable the button from clicking.
-    const clickButton =
-        model.clicks < 5
-            ? button([ text("Click me!") ], [ on("click", () => "Click") ])
-            : button([ text("You've clicked too much") ], [ ]);
-
     return div(
         [
-            h1([ text("Hi there") ], [ ]),
+            h1([ text("Name collector") ], [ ]),
             div(
                 [
-                    text(
-                        `Welcome ${model.name}. You've clicked ${model.clicks} times`
+                    text(`Enter a name`),
+                    input(
+                        [ ],
+                        [
+                            on("input", (data) =>
+                                SetCurrentName(data.target.value)
+                            ),
+                        ]
                     ),
+                    button([ text("Add") ], [ on("click", () => Click()) ]),
                 ],
                 [ ]
             ),
-            clickButton,
+            div(
+                model.names.map((name) =>
+                    div(
+                        [
+                            text(name),
+                            button(
+                                [ text("Remove this name") ],
+                                [ on("click", () => Remove(name)) ]
+                            ),
+                        ],
+                        [ ]
+                    )
+                ),
+                [ ]
+            ),
         ],
         [ ]
     );
