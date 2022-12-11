@@ -494,55 +494,49 @@ function update(message: Message, model: Model): Model {
     }
 }
 
-// Our view function.
-function view(model: Model): Html<Message> {
+// Our view functions.
+function viewTitle(): Html<Message> {
+    return h1([ text("Name collector") ], [ ], [ attribute("class", "title") ]);
+}
+
+function viewNameEntry(model: Model): Html<Message> {
     return div(
         [
-            h1(
-                [ text("Name collector") ],
+            text(`Enter a name`),
+            input(
                 [ ],
-                [ attribute("class", "title") ]
+                [ on("input", (data) => SetCurrentName(data.target.value)) ],
+                [ attribute("value", model.currentName) ]
             ),
-            div(
-                [
-                    text(`Enter a name`),
-                    input(
-                        [ ],
-                        [
-                            on("input", (data) =>
-                                SetCurrentName(data.target.value)
-                            ),
-                        ],
-                        [ attribute("value", model.currentName) ]
-                    ),
-                    button(
-                        [ text("Add") ],
-                        [ on("click", () => Click()) ],
-                        [ ]
-                    ),
-                ],
-                [ ],
-                [ ]
-            ),
-            div(
-                model.names.map((name) =>
-                    div(
-                        [
-                            text(name),
-                            button(
-                                [ text("Remove this name") ],
-                                [ on("click", () => Remove(name)) ],
-                                [ ]
-                            ),
-                        ],
-                        [ ],
-                        [ attribute("class", "name-list-item") ]
-                    )
-                ),
-                [ ],
+            button([ text("Add") ], [ on("click", () => Click()) ], [ ]),
+        ],
+        [ ],
+        [ ]
+    );
+}
+
+function viewName(name: string): Html<Message> {
+    return div(
+        [
+            text(name),
+            button(
+                [ text("Remove this name") ],
+                [ on("click", () => Remove(name)) ],
                 [ ]
             ),
         ],
+        [ ],
+        [ attribute("class", "name-list-item") ]
+    );
+}
+
+function viewNames(model: Model): Html<Message> {
+    return div(model.names.map(viewName), [ ], [ ]);
+}
+
+function view(model: Model): Html<Message> {
+    return div(
+        [ viewTitle(), viewNameEntry(model), viewNames(model) ],
         [ ],
         [ ]
     );
