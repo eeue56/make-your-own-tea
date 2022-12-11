@@ -17,6 +17,9 @@ function on<message>(
     };
 }
 
+// Valid tags.
+type Tag = "div" | "h1" | "button";
+
 // To provide a way to do patching and generation of html,
 // we build up an abstract syntax tree (AST).
 // Working with an AST allows you to provide a higher level API
@@ -27,7 +30,7 @@ function on<message>(
 // to keep track of attached listeners, so they can be removed during patching.
 type Node<message> = {
     kind: "Node";
-    tag: "div" | "h1" | "button";
+    tag: Tag;
     children: Html<message>[];
     events: Event<message>[];
     _eventListeners: {
@@ -44,43 +47,39 @@ type Html<message> = Node<message> | TextNode;
 
 // To provide users of the library with better auto complete and restrict the inside baseball
 // of how the AST looks, we provide these helper functions.
-function div<message>(
+function node<message>(
+    tag: Tag,
     children: Html<message>[],
     events: Event<message>[]
 ): Html<message> {
     return {
         kind: "Node",
-        tag: "div",
+        tag,
         children,
         events,
         _eventListeners: [ ],
     };
+}
+
+function div<message>(
+    children: Html<message>[],
+    events: Event<message>[]
+): Html<message> {
+    return node("div", children, events);
 }
 
 function h1<message>(
     children: Html<message>[],
     events: Event<message>[]
 ): Html<message> {
-    return {
-        kind: "Node",
-        tag: "h1",
-        children,
-        events,
-        _eventListeners: [ ],
-    };
+    return node("h1", children, events);
 }
 
 function button<message>(
     children: Html<message>[],
     events: Event<message>[]
 ): Html<message> {
-    return {
-        kind: "Node",
-        tag: "button",
-        children,
-        events,
-        _eventListeners: [ ],
-    };
+    return node("button", children, events);
 }
 
 function text(content: string): Html<any> {
