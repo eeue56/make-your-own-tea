@@ -142,16 +142,26 @@ function text(content: string): Html<any> {
 // Every Elm architecture framework roughly follows this structure.
 // An initial model is passed, to generate the initial view.
 // An update function describes how to take a message and a model, and return the next model.
+// Update has an optional argument, send, which is a function that allows the user to
+// send a message to the update loop async.
 // Finally, the view function will take a model and produce something that be rendered
 type Program<model, message> = {
     initialModel: model;
-    update(message: message, model: model): model;
+    update(
+        message: message,
+        model: model,
+        send?: (message: message) => void
+    ): model;
     view(model: model): Html<message>;
 };
 
 // Once we've started a program, we'll want a type to represent it.
-// For now, we'll just define an empty object.
-type RunningProgram = {};
+// We'll provide a way to check the current program's model state
+// And provide a way to send a message to a running program from outside the program.
+type RunningProgram<model, message> = {
+    model: model;
+    send(message: message): void;
+};
 
 type Tree = HTMLElement | Text;
 
@@ -349,6 +359,13 @@ function patch<message>(
     switch (previousView.kind) {
         // if we have a text node, just replace the current child with the next view
         case "Text": {
+            if (
+                nextView.kind === "Text" &&
+                previousView.content === nextView.content
+            ) {
+                return status;
+            }
+
             currentTree.replaceWith(buildTree(listener, nextView));
             return { ...status, replaced: 1 };
         }
@@ -420,7 +437,7 @@ function patch<message>(
 // Populates a root tag with the content provided by the view function.
 function runProgram<model, message>(
     program: Program<model, message>
-): RunningProgram {
+): RunningProgram<model, message> {
     let currentModel = program.initialModel;
     let previousView = program.view(currentModel);
     let currentTree: Tree | null = null;
@@ -429,7 +446,7 @@ function runProgram<model, message>(
     if (root) {
         const listener = (msg: message) => {
             if (currentTree === null) return;
-            currentModel = program.update(msg, currentModel);
+            currentModel = program.update(msg, currentModel, listener);
 
             const nextView = program.view(currentModel);
             const status = patch(listener, previousView, nextView, currentTree);
@@ -441,13 +458,13 @@ function runProgram<model, message>(
         currentTree = buildTree(listener, previousView);
         // we now replace the children of the root element with the elements
         root.replaceChildren(currentTree);
+        return { send: listener, model: currentModel };
     } else {
         console.error(
             "You forgot to define a <div id='root'></div> inside body"
         );
+        return { send: () => {}, model: currentModel };
     }
-
-    return {};
 }
 
 // --------------------------------------------------
@@ -474,6 +491,14 @@ type Click = {
 
 function Click(): Click {
     return { kind: "Click" };
+}
+
+type ClickWithDelay = {
+    kind: "ClickWithDelay";
+};
+
+function ClickWithDelay(): ClickWithDelay {
+    return { kind: "ClickWithDelay" };
 }
 
 type SetCurrentName = {
@@ -503,9 +528,25 @@ function Check(name: string): Check {
     return { kind: "Check", name };
 }
 
+type AddName = {
+    kind: "AddName";
+    name: string;
+};
+
+function AddName(name: string): AddName {
+    return { kind: "AddName", name };
+}
+
 // Our union type of messages.
 // We have Noop - aka, do nothing, and Click - aka, a user has clicked the button.
-type Message = Noop | Click | SetCurrentName | Remove | Check;
+type Message =
+    | Noop
+    | Click
+    | ClickWithDelay
+    | SetCurrentName
+    | Remove
+    | Check
+    | AddName;
 
 // Initial model
 const initialModel: Model = {
@@ -515,7 +556,11 @@ const initialModel: Model = {
 };
 
 // Our update function.
-function update(message: Message, model: Model): Model {
+function update(
+    message: Message,
+    model: Model,
+    send: (message: Message) => void
+): Model {
     switch (message.kind) {
         case "Noop": {
             return model;
@@ -527,6 +572,12 @@ function update(message: Message, model: Model): Model {
                 checkedNames: [ ...model.names, model.currentName ],
                 currentName: "",
             };
+        }
+        case "ClickWithDelay": {
+            setTimeout(() => {
+                send(Click());
+            }, 3000);
+            return model;
         }
         case "SetCurrentName": {
             return { ...model, currentName: message.value };
@@ -552,6 +603,13 @@ function update(message: Message, model: Model): Model {
                 };
             }
         }
+        case "AddName": {
+            return {
+                ...model,
+                names: [ ...model.names, message.name ],
+                checkedNames: [ ...model.names, message.name ],
+            };
+        }
     }
 }
 
@@ -570,6 +628,11 @@ function viewNameEntry(model: Model): Html<Message> {
                 [ attribute("value", model.currentName) ]
             ),
             button([ text("Add") ], [ on("click", () => Click()) ], [ ]),
+            button(
+                [ text("Add with a delay") ],
+                [ on("click", () => ClickWithDelay()) ],
+                [ ]
+            ),
         ],
         [ ],
         [ ]
@@ -630,3 +693,7 @@ const program = runProgram({
     view,
     update,
 });
+
+setTimeout(() => {
+    program.send(AddName("A name from timeout"));
+}, 5000);
