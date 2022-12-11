@@ -286,7 +286,8 @@ function renderAttributeAsString(attribute: Attribute): string {
 // Sometimes we may want to render a Html tree as a string
 // for example, on the server-side so that we can create html documents
 // prior to sending them to the client.
-// This is also required for doing hydration - which we'll look at next.
+// This is also required for doing hydration, to provide content to actually
+// hydrate.
 // Rendering to string is pretty straight-forward, just create tags,
 // provide their attributes, and nest their content.
 // At a later stage we will also handle html tags that can't have
@@ -308,6 +309,52 @@ function renderAsString<message>(html: Html<message>): string {
         }
         case "Text": {
             return html.content;
+        }
+    }
+}
+
+// Hydration is the act of taking a DOM and attaching event handlers so that
+// the event loop can take over.
+// Typically hydration looks something like:
+//
+// 1) Define a typical view, update, model trio
+// 2) Use the view and model to render an initial DOM: for best effect,
+// you're want to do that on the server.
+// 3) Run hydration code with the model/view/update to attach events
+// 4) After any messages to the update function, the event loop takes over
+// as in a regular client-side initialized program.
+function hydrate<message>(
+    listener: (msg: message) => void,
+    nextView: Html<message>,
+    currentTree: Tree
+): void {
+    switch (nextView.kind) {
+        case "Text": {
+            return;
+        }
+        case "Node": {
+            for (const event of nextView.events) {
+                const eventListener = (data: globalThis.Event) => {
+                    listener(event.messageConverter(data));
+                };
+
+                currentTree.addEventListener(event.name, eventListener, {
+                    once: true,
+                });
+
+                nextView._eventListeners.push({
+                    event: event,
+                    listener: eventListener,
+                });
+            }
+
+            for (let i = 0; i < nextView.children.length; i++) {
+                const child = nextView.children[i];
+                const childNode = currentTree.childNodes[i];
+                if (childNode && childNode.ELEMENT_NODE) {
+                    hydrate(listener, child, childNode as HTMLElement);
+                }
+            }
         }
     }
 }
@@ -557,6 +604,44 @@ function runProgram<model, message>(
     }
 }
 
+// Takes a program, then actually calls the related functions.
+// Hydrates a root tag with the content provided by the view function.
+function runProgramWithHydration<model, message>(
+    program: Program<model, message>
+): RunningProgram<model, message> {
+    let currentModel = program.initialModel;
+    let previousView = program.view(currentModel);
+    let currentTree: Tree | null = null;
+
+    const root = document.getElementById("root");
+    if (root) {
+        const listener = (msg: message) => {
+            if (currentTree === null) return;
+            currentModel = program.update(msg, currentModel, listener);
+
+            const nextView = program.view(currentModel);
+            const status = patch(listener, previousView, nextView, currentTree);
+            console.log("Patching status:");
+            console.log(JSON.stringify(status));
+            previousView = nextView;
+        };
+
+        // our API always requires a singular direct child under the root node
+        // this could be replaced with just the root child if we changed the code in
+        // runProgram to replace the root node, rather than the children.
+        currentTree = root.children[0] as HTMLElement;
+
+        // we now reattach event listeners to the dom
+        hydrate(listener, previousView, currentTree);
+        return { send: listener, model: currentModel };
+    } else {
+        console.error(
+            "You forgot to define a <div id='root'></div> inside body"
+        );
+        return { send: () => {}, model: currentModel };
+    }
+}
+
 // --------------------------------------------------
 // Our application.
 
@@ -783,8 +868,6 @@ function view(model: Model): Html<Message> {
 }
 
 // Populate root node with statically rendered content.
-// Later on we'll use this for hydration, for now
-// it's just an example of renderAsString being used.
 function staticMain(): void {
     const root = document.getElementById("root");
 
@@ -806,5 +889,15 @@ function main() {
     }, 5000);
 }
 
-staticMain();
-main();
+// First render the initial view
+// then we hydrate the view.
+function mainWithHydration() {
+    staticMain();
+    const program = runProgramWithHydration({
+        initialModel,
+        view,
+        update,
+    });
+}
+
+mainWithHydration();
