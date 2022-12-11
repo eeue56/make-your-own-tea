@@ -50,14 +50,16 @@ function attribute(key: string, value: string | boolean): Attribute {
 }
 
 // Valid tags.
-type Tag = "div" | "h1" | "button" | "input";
+type VoidTag = "input";
+type Tag = "div" | "h1" | "button";
 
 // To provide a way to do patching and generation of html,
 // we build up an abstract syntax tree (AST).
 // Working with an AST allows you to provide a higher level API
 // for users of your library, while also restricting what's possible.
 // The first half of the AST are Nodes - these map directly to HTML tags.
-// For now, we'll allow them all to have children. Think of a div inside a div.
+// We split these up into nodes which can have children - think of a div inside a div
+// and void nodes, which have no children - think of a input tag.
 // Nodes have events, which are of generic type message. _eventListeners is used
 // to keep track of attached listeners, so they can be removed during patching.
 // Nodes also have attributes.
@@ -73,11 +75,22 @@ type Node<message> = {
     attributes: Attribute[];
 };
 
+type VoidNode<message> = {
+    kind: "VoidNode";
+    tag: VoidTag;
+    events: Event<message>[];
+    _eventListeners: {
+        event: Event<message>;
+        listener: EventListener;
+    }[];
+    attributes: Attribute[];
+};
+
 // The second half of the AST are TextNodes - the string content inside a HTML tag
 // For example <div>Hello world</div> would be Node("div", [ TextNode("Hello world") ], [ ])
 type TextNode = { kind: "Text"; content: string };
 
-type Html<message> = Node<message> | TextNode;
+type Html<message> = Node<message> | VoidNode<message> | TextNode;
 
 // To provide users of the library with better auto complete and restrict the inside baseball
 // of how the AST looks, we provide these helper functions.
@@ -91,6 +104,20 @@ function node<message>(
         kind: "Node",
         tag,
         children,
+        events,
+        _eventListeners: [ ],
+        attributes,
+    };
+}
+
+function voidNode<message>(
+    tag: VoidTag,
+    events: Event<message>[],
+    attributes: Attribute[]
+): Html<message> {
+    return {
+        kind: "VoidNode",
+        tag,
         events,
         _eventListeners: [ ],
         attributes,
@@ -122,11 +149,10 @@ function button<message>(
 }
 
 function input<message>(
-    children: Html<message>[],
     events: Event<message>[],
     attributes: Attribute[]
 ): Html<message> {
-    return node("input", children, events, attributes);
+    return voidNode("input", events, attributes);
 }
 
 function text(content: string): Html<any> {
@@ -272,6 +298,27 @@ function buildTree<message>(
             }
             return node;
         }
+        case "VoidNode": {
+            const node = document.createElement(html.tag);
+            for (const event of html.events) {
+                const eventListener = (data: globalThis.Event) => {
+                    listener(event.messageConverter(data));
+                };
+
+                node.addEventListener(event.name, eventListener, {
+                    once: true,
+                });
+
+                html._eventListeners.push({
+                    event: event,
+                    listener: eventListener,
+                });
+            }
+            for (const attribute of html.attributes) {
+                setAttribute(node, attribute);
+            }
+            return node;
+        }
         case "Text": {
             return document.createTextNode(html.content);
         }
@@ -316,6 +363,18 @@ function renderAsString<message>(html: Html<message>): string {
                 return `<${container}>${children}</${container}>`;
             } else {
                 return `<${container} ${attributes}>${children}</${container}>`;
+            }
+        }
+        case "VoidNode": {
+            const container = html.tag;
+            const attributes = html.attributes
+                .map(renderAttributeAsString)
+                .join(" ");
+
+            if (attributes.length === 0) {
+                return `<${container}>`;
+            } else {
+                return `<${container} ${attributes}>`;
             }
         }
         case "Text": {
@@ -365,6 +424,22 @@ function hydrate<message>(
                 if (childNode && childNode.ELEMENT_NODE) {
                     hydrate(listener, child, childNode as HTMLElement);
                 }
+            }
+        }
+        case "VoidNode": {
+            for (const event of nextView.events) {
+                const eventListener = (data: globalThis.Event) => {
+                    listener(event.messageConverter(data));
+                };
+
+                currentTree.addEventListener(event.name, eventListener, {
+                    once: true,
+                });
+
+                nextView._eventListeners.push({
+                    event: event,
+                    listener: eventListener,
+                });
             }
         }
     }
@@ -432,7 +507,8 @@ function patchAttributes<message>(
         case "Text": {
             return;
         }
-        case "Node": {
+        case "Node":
+        case "VoidNode": {
             if (previousView.kind !== "Text") {
                 const previousAttributeKeys = previousView.attributes.map(
                     (attribute) => attribute.key
@@ -573,6 +649,24 @@ function patch<message>(
                     status.removed++;
                 }
 
+                status.patched++;
+
+                return status;
+            }
+        }
+
+        case "VoidNode": {
+            nextView = nextView as VoidNode<message>;
+            currentTree = currentTree as HTMLElement;
+
+            // if we have a node with a different tag from the previous view
+            // replace the current element with the next view.
+            if (previousView.tag !== nextView.tag) {
+                currentTree.replaceWith(buildTree(listener, nextView));
+                return { ...status, replaced: 1 };
+            } else {
+                patchEvents(listener, previousView, nextView, currentTree);
+                patchAttributes(previousView, nextView, currentTree);
                 status.patched++;
 
                 return status;
@@ -833,7 +927,6 @@ function viewNameEntry(model: Model): Html<Message> {
         [
             text(`Enter a name`),
             input(
-                [ ],
                 [ on("input", (data) => SetCurrentName(data.target.value)) ],
                 [ attribute("value", model.currentName) ]
             ),
@@ -853,7 +946,6 @@ function viewName(name: string, isChecked: boolean): Html<Message> {
     return div(
         [
             input(
-                [ ],
                 [ on("click", () => Check(name)) ],
                 [
                     attribute("type", "checkbox"),
