@@ -267,6 +267,51 @@ function buildTree<message>(
     }
 }
 
+// An attribute as string is done through the = symbol
+// These should be part of a tag.
+function renderAttributeAsString(attribute: Attribute): string {
+    switch (attribute.kind) {
+        case "BooleanAttribute": {
+            return attribute.value ? `${attribute.key}="${attribute.key}"` : "";
+        }
+        case "StringAttribute": {
+            if (attribute.value.indexOf('"') > 0) {
+                return `${attribute.key}='${attribute.value}'`;
+            }
+            return `${attribute.key}="${attribute.value}"`;
+        }
+    }
+}
+
+// Sometimes we may want to render a Html tree as a string
+// for example, on the server-side so that we can create html documents
+// prior to sending them to the client.
+// This is also required for doing hydration - which we'll look at next.
+// Rendering to string is pretty straight-forward, just create tags,
+// provide their attributes, and nest their content.
+// At a later stage we will also handle html tags that can't have
+// children - e.g input
+function renderAsString<message>(html: Html<message>): string {
+    switch (html.kind) {
+        case "Node": {
+            const container = html.tag;
+            const children = html.children.map(renderAsString).join("");
+            const attributes = html.attributes
+                .map(renderAttributeAsString)
+                .join(" ");
+
+            if (attributes.length === 0) {
+                return `<${container}>${children}</${container}>`;
+            } else {
+                return `<${container} ${attributes}>${children}</${container}>`;
+            }
+        }
+        case "Text": {
+            return html.content;
+        }
+    }
+}
+
 // To keep track of how patching went, we keep track of the
 // replaced, patched, removed and added elements.
 // This will be helpful when debugging - patching is a recursive function
@@ -737,13 +782,29 @@ function view(model: Model): Html<Message> {
     );
 }
 
-// Actually run the program.
-const program = runProgram({
-    initialModel,
-    view,
-    update,
-});
+// Populate root node with statically rendered content.
+// Later on we'll use this for hydration, for now
+// it's just an example of renderAsString being used.
+function staticMain(): void {
+    const root = document.getElementById("root");
 
-setTimeout(() => {
-    program.send(AddName("A name from timeout"));
-}, 5000);
+    if (root) {
+        root.innerHTML = renderAsString(view(initialModel));
+    }
+}
+
+// Actually run the program.
+function main() {
+    const program = runProgram({
+        initialModel,
+        view,
+        update,
+    });
+
+    setTimeout(() => {
+        program.send(AddName("A name from timeout"));
+    }, 5000);
+}
+
+staticMain();
+main();
