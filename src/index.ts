@@ -17,6 +17,20 @@ function on<message>(
     };
 }
 
+// Attributes take many forms - some don't need any value, some need boolean values.
+// For now we'll just focus on string attributes e.g class or value.
+type Attribute = {
+    key: string;
+    value: string;
+};
+
+function attribute(key: string, value: string): Attribute {
+    return {
+        key,
+        value,
+    };
+}
+
 // Valid tags.
 type Tag = "div" | "h1" | "button" | "input";
 
@@ -28,6 +42,7 @@ type Tag = "div" | "h1" | "button" | "input";
 // For now, we'll allow them all to have children. Think of a div inside a div.
 // Nodes have events, which are of generic type message. _eventListeners is used
 // to keep track of attached listeners, so they can be removed during patching.
+// Nodes also have attributes.
 type Node<message> = {
     kind: "Node";
     tag: Tag;
@@ -37,6 +52,7 @@ type Node<message> = {
         event: Event<message>;
         listener: EventListener;
     }[];
+    attributes: Attribute[];
 };
 
 // The second half of the AST are TextNodes - the string content inside a HTML tag
@@ -50,7 +66,8 @@ type Html<message> = Node<message> | TextNode;
 function node<message>(
     tag: Tag,
     children: Html<message>[],
-    events: Event<message>[]
+    events: Event<message>[],
+    attributes: Attribute[]
 ): Html<message> {
     return {
         kind: "Node",
@@ -58,35 +75,40 @@ function node<message>(
         children,
         events,
         _eventListeners: [ ],
+        attributes,
     };
 }
 
 function div<message>(
     children: Html<message>[],
-    events: Event<message>[]
+    events: Event<message>[],
+    attributes: Attribute[]
 ): Html<message> {
-    return node("div", children, events);
+    return node("div", children, events, attributes);
 }
 
 function h1<message>(
     children: Html<message>[],
-    events: Event<message>[]
+    events: Event<message>[],
+    attributes: Attribute[]
 ): Html<message> {
-    return node("h1", children, events);
+    return node("h1", children, events, attributes);
 }
 
 function button<message>(
     children: Html<message>[],
-    events: Event<message>[]
+    events: Event<message>[],
+    attributes: Attribute[]
 ): Html<message> {
-    return node("button", children, events);
+    return node("button", children, events, attributes);
 }
 
 function input<message>(
     children: Html<message>[],
-    events: Event<message>[]
+    events: Event<message>[],
+    attributes: Attribute[]
 ): Html<message> {
-    return node("input", children, events);
+    return node("input", children, events, attributes);
 }
 
 function text(content: string): Html<any> {
@@ -115,6 +137,41 @@ type RunningProgram = {};
 
 type Tree = HTMLElement | Text;
 
+// there are two ways of setting values on html elements: properties and attributes.
+// Properties you'd set like element["value"] = ""
+// Whereas attributes are set via element.setAttribute
+function isProperty(tag: string, key: string): boolean {
+    switch (tag) {
+        case "INPUT":
+            return (
+                key === "checked" ||
+                key === "indeterminate" ||
+                key === "value" ||
+                key === "readonly" ||
+                key === "disabled"
+            );
+        case "OPTION":
+            return key === "selected" || key === "disabled";
+        case "TEXTAREA":
+            return key === "value" || key === "readonly" || key === "disabled";
+        case "SELECT":
+            return key === "value" || key === "disabled";
+        case "BUTTON":
+        case "OPTGROUP":
+            return key === "disabled";
+    }
+    return false;
+}
+
+// set an attribute based on whether it's a property or not
+function setAttribute(currentTree: HTMLElement, attribute: Attribute) {
+    if (isProperty(currentTree.tagName, attribute.key)) {
+        (currentTree as any)[attribute.key] = attribute.value;
+    } else {
+        currentTree.setAttribute(attribute.key, attribute.value);
+    }
+}
+
 // We need some way of turning our AST into actual things the DOM API can use
 // so Nodes are turned into HTMLElements, and TextNodes are turned into Text.
 function buildTree<message>(
@@ -140,6 +197,9 @@ function buildTree<message>(
             }
             for (const child of html.children) {
                 node.appendChild(buildTree(listener, child));
+            }
+            for (const attribute of html.attributes) {
+                setAttribute(node, attribute);
             }
             return node;
         }
@@ -194,6 +254,40 @@ function patchEvents<message>(
     }
 }
 
+// Patching attributes has four parts:
+// 1) remove any attributes that don't exist any more
+// 2) add new attributes that didn't exist previously
+// 3) don't change attributes that exist with the same value
+// 4) change attributes that have changed in value
+// 1 and 2 are pretty simple, but 3 and 4 are important
+// If you change values to be exactly what they are already
+// it can trigger a redraw
+// We will handle 3 later
+function patchAttributes<message>(
+    previousView: Html<message>,
+    nextView: Html<message>,
+    currentTree: HTMLElement
+) {
+    switch (nextView.kind) {
+        case "Text": {
+            return;
+        }
+        case "Node": {
+            // remove attributes from the previously rendered node
+            if (previousView.kind !== "Text") {
+                for (const attribute of previousView.attributes) {
+                    currentTree.removeAttribute(attribute.key);
+                }
+            }
+
+            // set attributes
+            for (const attribute of nextView.attributes) {
+                setAttribute(currentTree, attribute);
+            }
+        }
+    }
+}
+
 // Patching a node involves detecting changes in the previous view and the next view
 // then modifying the DOM in order to reflect the next view.
 // A listener is passed in that will form the core of our update loop.
@@ -235,6 +329,7 @@ function patch<message>(
                 return { ...status, replaced: 1 };
             } else {
                 patchEvents(listener, previousView, nextView, currentTree);
+                patchAttributes(previousView, nextView, currentTree);
 
                 // patch any existing children.
                 // add any missing children.
@@ -403,7 +498,11 @@ function update(message: Message, model: Model): Model {
 function view(model: Model): Html<Message> {
     return div(
         [
-            h1([ text("Name collector") ], [ ]),
+            h1(
+                [ text("Name collector") ],
+                [ ],
+                [ attribute("class", "title") ]
+            ),
             div(
                 [
                     text(`Enter a name`),
@@ -413,10 +512,16 @@ function view(model: Model): Html<Message> {
                             on("input", (data) =>
                                 SetCurrentName(data.target.value)
                             ),
-                        ]
+                        ],
+                        [ attribute("value", model.currentName) ]
                     ),
-                    button([ text("Add") ], [ on("click", () => Click()) ]),
+                    button(
+                        [ text("Add") ],
+                        [ on("click", () => Click()) ],
+                        [ ]
+                    ),
                 ],
+                [ ],
                 [ ]
             ),
             div(
@@ -426,15 +531,19 @@ function view(model: Model): Html<Message> {
                             text(name),
                             button(
                                 [ text("Remove this name") ],
-                                [ on("click", () => Remove(name)) ]
+                                [ on("click", () => Remove(name)) ],
+                                [ ]
                             ),
                         ],
-                        [ ]
+                        [ ],
+                        [ attribute("class", "name-list-item") ]
                     )
                 ),
+                [ ],
                 [ ]
             ),
         ],
+        [ ],
         [ ]
     );
 }
